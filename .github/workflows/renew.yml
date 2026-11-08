@@ -14,7 +14,7 @@ jobs:
     env:
       KEY: ${{ secrets.INSTABOX_API_KEY }}
       MID: m_agqzk3c76fpz2wahwok6bbbadi
-      LEAD_MIN: "20"            # 剩余不足这么多分钟就续期（cron 可能延迟，留足余量）
+      LEAD_MIN: "40"            # 剩余不足这么多分钟就续期（cron 可能延迟，留足余量）
       HARD_CAP: "480"           # 免费档每轮硬上限（分钟）；没到硬上限的动态截止会被自动延长，不处理
     steps:
       - name: renew
