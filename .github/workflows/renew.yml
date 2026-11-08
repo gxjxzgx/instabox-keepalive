@@ -1,0 +1,44 @@
+name: instabox-renew
+# 到期前主动暂停再恢复，避免满时长暂停后的冷却（连续多次会到 2 小时）
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+concurrency:
+  group: instabox-renew
+  cancel-in-progress: false
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      KEY: ${{ secrets.INSTABOX_API_KEY }}
+      MID: m_agqzk3c76fpz2wahwok6bbbadi
+      LEAD_MIN: "20"            # 剩余不足这么多分钟就续期（cron 可能延迟，留足余量）
+    steps:
+      - name: renew
+        run: |
+          set -u
+          [ -n "$KEY" ] || { echo "缺少 INSTABOX_API_KEY 密钥"; exit 1; }
+          API=https://api.instabox.sh/v1/machines/$MID
+          get() { curl -s -m 30 -H "X-API-Key: $KEY" "$API"; }
+          act() { curl -s -m 90 -o /dev/null -w "%{http_code}" -X POST -H "X-API-Key: $KEY" -H "Idempotency-Key: $(uuidgen)" "$API/$1"; }
+          # 等到目标状态，最多约 3 分钟
+          wait_for() { for i in $(seq 1 36); do s=$(get | jq -r .state); [ "$s" = "$1" ] && return 0; sleep 5; done; echo "等 $1 超时，当前 $s"; return 1; }
+          m=$(get)
+          state=$(echo "$m" | jq -r .state)
+          echo "状态: $state"
+          # 上次暂停后恢复失败的自愈：手动暂停（非自动暂停、无冷却）就恢复
+          cd_until=$(echo "$m" | jq -r '.cooldownUntil // empty')
+          cooling=0; [ -n "$cd_until" ] && [ "$(date -d "$cd_until" +%s)" -gt "$(date +%s)" ] && cooling=1
+          if [ "$state" = "suspended" ] && [ "$(echo "$m" | jq -r '.autoSuspendedAt // empty')" = "" ] && [ "$cooling" = 0 ]; then
+            echo "发现手动暂停，恢复: $(act resume)"; wait_for running; exit $?
+          fi
+          [ "$state" = "running" ] || exit 0
+          start=$(echo "$m" | jq -r '.runStartedAt // empty'); max=$(echo "$m" | jq -r '.maxRunMinutes // empty')
+          [ -n "$start" ] && [ -n "$max" ] && [ "$max" -gt 0 ] || { echo "无运行时长信息"; exit 0; }
+          left=$(( ( $(date -d "$start" +%s) + max*60 - $(date +%s) ) / 60 ))
+          echo "剩余约 ${left} 分钟"
+          [ "$left" -le "$LEAD_MIN" ] || exit 0
+          echo "暂停: $(act suspend)"; wait_for suspended || true
+          echo "恢复: $(act resume)"; wait_for running
