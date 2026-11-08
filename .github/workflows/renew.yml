@@ -15,6 +15,7 @@ jobs:
       KEY: ${{ secrets.INSTABOX_API_KEY }}
       MID: m_agqzk3c76fpz2wahwok6bbbadi
       LEAD_MIN: "20"            # 剩余不足这么多分钟就续期（cron 可能延迟，留足余量）
+      HARD_CAP: "480"           # 免费档每轮硬上限（分钟）；没到硬上限的动态截止会被自动延长，不处理
     steps:
       - name: renew
         run: |
@@ -39,6 +40,8 @@ jobs:
           [ -n "$start" ] && [ -n "$max" ] && [ "$max" -gt 0 ] || { echo "无运行时长信息"; exit 0; }
           left=$(( ( $(date -d "$start" +%s) + max*60 - $(date +%s) ) / 60 ))
           echo "剩余约 ${left} 分钟"
+          # maxRunMinutes 是动态截止（2h 起、有活动就延长）；只在截止就是 8h 硬上限时才动手
+          [ "$max" -ge "$HARD_CAP" ] || { echo "动态截止 ${max} 分钟，等平台自动延长"; exit 0; }
           [ "$left" -le "$LEAD_MIN" ] || exit 0
           echo "暂停: $(act suspend)"; wait_for suspended || true
           echo "恢复: $(act resume)"; wait_for running
